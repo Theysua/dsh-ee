@@ -97,6 +97,9 @@ func TestCLI(t *testing.T) {
 	if _, code, _, errOut := cli("schema", "get", "nope"); code != 1 || !strings.Contains(errOut, "schema list") {
 		t.Fatalf("不存在的规格：%d %q", code, errOut)
 	}
+	if _, code, out, _ := cli("extension", "check", "--help"); code != 0 || !strings.Contains(out, "extension check") {
+		t.Fatalf("子命令后面的 --help 也应当给用法：%d\n%s", code, out)
+	}
 	if _, code, out, _ := cli("help"); code != 0 || !strings.Contains(out, "extension check") {
 		t.Fatalf("help：%d\n%s", code, out)
 	}

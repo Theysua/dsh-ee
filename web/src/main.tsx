@@ -20,6 +20,7 @@ import Account from "./pages/account";
 import PluginDetail from "./pages/plugin-detail";
 import AssetDetail from "./pages/asset-detail";
 import AssetEditor from "./pages/asset-editor";
+import ExtensionInstall from "./pages/extension-install";
 import AppWebPage from "./pages/app-web";
 import AccessRequestPage from "./pages/access-request";
 import KnowledgeBase from "./pages/knowledge-base";
@@ -178,6 +179,7 @@ function AppRoutes() {
         <Route path="device" element={<DevicePage />} />
         <Route path="plugins/:name" element={<PluginDetail />} />
         <Route path="assets/new" element={<AssetEditor />} />
+        <Route path="extensions/install" element={<ExtensionInstall />} />
         <Route path="assets/:id" element={<AssetDetail />} />
         <Route path="assets/:id/edit" element={<AssetEditor />} />
         <Route path="connections/:slug" element={<ConnectionBySlug />} />

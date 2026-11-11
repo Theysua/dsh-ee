@@ -62,7 +62,7 @@ type CredentialInfo struct {
 	Header   string   `json:"header,omitempty"`
 	Audience string   `json:"audience,omitempty"`
 	Claims   []string `json:"claims,omitempty"`
-	// 另外带的共享凭据放在哪个请求头
+	// 共享凭据放在哪个请求头：shared 模式下就是那一份凭据，其他模式下是员工身份之外另带的一份
 	SharedHeader string `json:"sharedHeader,omitempty"`
 }
 
@@ -414,8 +414,15 @@ func (c *checker) credential(m *Manifest) *CredentialInfo {
 	if cr.Header != "" && !headerRe.MatchString(cr.Header) {
 		c.add("credential.header_invalid", at("credential", "header"), fmt.Sprintf("请求头名字 %q 不对", cr.Header), "例如 \"X-User-Token\"；留空就是 Authorization: Bearer")
 	}
-	if cr.Mode == CredShared && (cr.Header != "" || cr.Shared != nil) {
-		c.add("credential.field_unused", at("credential"), "shared 模式只有一份共享凭据，header 和 shared 不起作用", "删掉 header / shared；共享凭据放在哪个请求头由管理员安装时选")
+	if cr.Mode == CredShared {
+		// 只有一份共享凭据：header 说的就是它放在哪个请求头
+		info.SharedHeader = "Authorization: Bearer"
+		if cr.Header != "" {
+			info.SharedHeader = canonical(cr.Header)
+		}
+		if cr.Shared != nil {
+			c.add("credential.field_unused", at("credential", "shared"), "shared 模式只有一份共享凭据，不用再写 shared", "删掉 shared；这份凭据要放在特定的请求头里就写 \"header\": \"X-API-Key\"")
+		}
 	}
 	if cr.Mode != CredEEJWT && (cr.Audience != "" || len(cr.Claims) > 0) {
 		c.add("credential.field_unused", at("credential"), "audience 和 claims 只在 ee_jwt 模式下有用", "删掉它们，或把 mode 改成 ee_jwt")
@@ -642,15 +649,42 @@ func fixedParams(t *Tool) []FixedParam {
 	return out
 }
 
-// keep 检查「只保留这些字段」写的是不是返回里真有的字段。接口文档没写返回结构时查不了，不报。
+// keep 检查「只保留这些字段」写的是不是返回里真有的字段。写法不对（超过两层）什么时候都报；
+// 字段在不在返回里，要接口文档写了返回结构才查得了。
 func (c *checker) keep(t *Tool, op *openapi.Tool, doc []byte, where string) {
-	fields, known := responseFields(doc, op.Op.Method, op.Op.Path)
-	if !known {
-		return
+	shape, known := responseShape(doc, op.Op.Method, op.Op.Path)
+	// 最容易犯的错：返回把列表包了一层（{items: [...], total}），keep 却直接写了里面每一项的字段。
+	// 没写进 keep 的字段一律丢掉，这样写返回会被清空，所以按错误报，并且只报这一条。
+	if known && !slices.ContainsFunc(t.Keep, func(k string) bool {
+		parent, _, _ := strings.Cut(k, ".")
+		return slices.Contains(shape.fields, parent)
+	}) {
+		for _, parent := range shape.fields {
+			subs := shape.sub[parent]
+			if i := slices.IndexFunc(t.Keep, func(k string) bool { return slices.Contains(subs, k) }); i >= 0 {
+				c.add("keep.wrapped", where+"/keep", fmt.Sprintf("工具 %s 的返回把内容包在 %s 里，keep 写的却是 %s 里面的字段：照现在的写法，返回给模型的会是空的", t.Name, parent, parent),
+					fmt.Sprintf("写成 \"%s.<字段名>\"，例如把 %q 改成 \"%s.%s\"；%s 之外还要留的第一层字段（比如总数）也要写上", parent, t.Keep[i], parent, t.Keep[i], parent))
+				return
+			}
+		}
 	}
 	for i, k := range t.Keep {
-		if !slices.Contains(fields, k) {
-			c.add("keep.unknown", fmt.Sprintf("%s/keep/%d", where, i), fmt.Sprintf("工具 %s 的返回里没有字段 %s，写了也留不下任何东西", t.Name, k), "接口文档里这个接口返回的字段："+strings.Join(fields, "、"))
+		at := fmt.Sprintf("%s/keep/%d", where, i)
+		parent, child, dotted := strings.Cut(k, ".")
+		if parent == "" || (dotted && (child == "" || strings.Contains(child, "."))) {
+			c.add("keep.unknown", at, fmt.Sprintf("工具 %s 的 keep 里 %q 写法不对：只能写第一层的字段名，或「字段.子字段」（到第二层为止）", t.Name, k),
+				"返回是 {\"items\": [...], \"total\": 1} 这样包了一层的列表时，写成 \"items.id\"、\"items.title\"、\"total\"")
+			continue
+		}
+		if !known {
+			continue
+		}
+		if !slices.Contains(shape.fields, parent) {
+			c.add("keep.unknown", at, fmt.Sprintf("工具 %s 的返回里没有字段 %s，写了也留不下任何东西", t.Name, parent), "接口文档里这个接口返回的字段："+strings.Join(shape.fields, "、"))
+			continue
+		}
+		if subs, ok := shape.sub[parent]; dotted && ok && !slices.Contains(subs, child) {
+			c.add("keep.unknown", at, fmt.Sprintf("工具 %s 返回的 %s 里没有字段 %s，写了也留不下任何东西", t.Name, parent, child), fmt.Sprintf("接口文档里 %s 的字段：%s", parent, strings.Join(subs, "、")))
 		}
 	}
 }
@@ -843,12 +877,20 @@ func jsonIs(raw json.RawMessage, typ string) bool {
 	return true
 }
 
-// responseFields 取一个接口成功返回的第一层字段名：返回对象就是它的字段，返回数组就是每一项的字段。
+// respShape 是一个接口成功返回的样子，只到第二层。
+type respShape struct {
+	// 第一层的字段：返回对象就是它的字段，返回数组就是每一项的字段
+	fields []string
+	// 第一层字段 → 它里面的字段（它是对象），或它每一项的字段（它是数组）；接口文档没写到这一层的不在里面
+	sub map[string][]string
+}
+
+// responseShape 从接口文档里取一个接口成功返回的结构。
 // 接口文档没写返回结构（没有 responses、不是 JSON、没有 properties）时 known 为 false。
-func responseFields(doc []byte, method, path string) (fields []string, known bool) {
+func responseShape(doc []byte, method, path string) (shape respShape, known bool) {
 	var root map[string]any
 	if yaml.Unmarshal(doc, &root) != nil {
-		return nil, false
+		return shape, false
 	}
 	get := func(v any, keys ...string) any {
 		for _, k := range keys {
@@ -878,6 +920,26 @@ func responseFields(doc []byte, method, path string) (fields []string, known boo
 		}
 		return nil
 	}
+	// propsOf 取一个结构的字段：是数组就看它每一项
+	propsOf := func(v any) map[string]any {
+		schema := deref(v)
+		if schema == nil {
+			return nil
+		}
+		if items := deref(schema["items"]); schema["type"] == "array" && items != nil {
+			schema = items
+		}
+		props, _ := schema["properties"].(map[string]any)
+		return props
+	}
+	names := func(props map[string]any) []string {
+		out := make([]string, 0, len(props))
+		for name := range props {
+			out = append(out, name)
+		}
+		sort.Strings(out)
+		return out
+	}
 	responses, _ := get(root, "paths", path, strings.ToLower(method), "responses").(map[string]any)
 	var codes []string
 	for code := range responses {
@@ -887,22 +949,17 @@ func responseFields(doc []byte, method, path string) (fields []string, known boo
 	}
 	sort.Strings(codes)
 	for _, code := range codes {
-		schema := deref(get(deref(responses[code]), "content", "application/json", "schema"))
-		if schema == nil {
-			continue
-		}
-		if items := deref(schema["items"]); schema["type"] == "array" && items != nil {
-			schema = items
-		}
-		props, _ := schema["properties"].(map[string]any)
+		props := propsOf(get(deref(responses[code]), "content", "application/json", "schema"))
 		if len(props) == 0 {
 			continue
 		}
-		for name := range props {
-			fields = append(fields, name)
+		shape.fields, shape.sub = names(props), map[string][]string{}
+		for name, p := range props {
+			if sub := propsOf(p); len(sub) > 0 {
+				shape.sub[name] = names(sub)
+			}
 		}
-		sort.Strings(fields)
-		return fields, true
+		return shape, true
 	}
-	return nil, false
+	return shape, false
 }

@@ -206,6 +206,10 @@ var agentExcluded = map[string]string{
 	"POST /api/admin/ee-jwt/rotate":                         "轮换签名密钥只在网页上做",
 }
 
+func init() {
+	agentExcluded["POST /api/admin/extensions/inspect"] = "安装扩展要管理员在网页上看过清单再确认；检查扩展用命令行 dsh-ee extension check"
+}
+
 // agentPending 是还没开放、等后续阶段的路由（管理侧工具）。
 // 开放一条就把它从这里删掉、在 agentSpecs 里加上；测试会卡住漏掉的。
 var agentPending = map[string]string{}

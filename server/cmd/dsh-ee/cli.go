@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/hikariming/dsh-ee/server/internal/extension"
@@ -32,10 +33,16 @@ func runCLI(args []string, stdout, stderr io.Writer) (handled bool, code int) {
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, cliUsage)
 		return true, 0
-	case "extension":
+	case "extension", "schema":
+		// 子命令后面跟 --help 也是要看用法，不是写错了参数
+		if slices.ContainsFunc(args[1:], func(a string) bool { return a == "-h" || a == "--help" }) {
+			fmt.Fprint(stdout, cliUsage)
+			return true, 0
+		}
+		if args[0] == "schema" {
+			return true, cliSchema(args[1:], stdout, stderr)
+		}
 		return true, cliExtension(args[1:], stdout, stderr)
-	case "schema":
-		return true, cliSchema(args[1:], stdout, stderr)
 	}
 	return false, 0
 }
@@ -99,7 +106,7 @@ func printCheck(w io.Writer, res *extension.Result) {
 	}
 	if cr := res.Credential; cr != nil {
 		line := map[string]string{
-			extension.CredShared:     "管理员配的一份共享凭据",
+			extension.CredShared:     "管理员配的一份共享凭据，放在 " + cr.SharedHeader,
 			extension.CredUserSecret: "员工自己填的凭据，放在 " + cr.Header,
 			extension.CredEEJWT:      "dsh-ee 为当前员工现签的身份令牌（ee_jwt），放在 " + cr.Header,
 			extension.CredOAuth:      "oauth",
@@ -112,7 +119,7 @@ func printCheck(w io.Writer, res *extension.Result) {
 				line += "，额外带 " + strings.Join(cr.Claims, "、")
 			}
 		}
-		if cr.SharedHeader != "" {
+		if cr.SharedHeader != "" && cr.Mode != extension.CredShared {
 			line += "；另带一份共享凭据，放在 " + cr.SharedHeader
 		}
 		fmt.Fprintf(w, "调用时的身份：%s\n", line)

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hikariming/dsh-ee/server/internal/extension"
 	"github.com/hikariming/dsh-ee/server/internal/rbac"
 	"github.com/hikariming/dsh-ee/server/internal/registry"
 	"github.com/hikariming/dsh-ee/server/internal/store"
@@ -67,6 +68,8 @@ type assetSpec struct {
 	TimeoutSec   int       `json:"timeout_seconds,omitempty"`
 	// 连接：员工身份（ee_jwt / user_secret），和上面的共享凭据并存；见 user_identity.go
 	UserAuth *connUserAuth `json:"user_auth,omitempty"`
+	// 连接：由扩展清单装出来的（声明式扩展）；见 extension_install.go
+	Extension *connExtension `json:"extension,omitempty"`
 }
 
 // connAuth 是连接上游的认证方式；凭据本身单独加密存放，不在版本内容里。
@@ -80,6 +83,12 @@ func limitRunes(s string, n int) bool { return len([]rune(s)) <= n }
 
 // validateSpec 检查并规范化版本内容，返回给提交人看的错误。
 func validateSpec(kind string, sp *assetSpec) string {
+	if kind == store.KindConnection && sp.Extension != nil {
+		// 扩展：名字、地址、凭据、工具都由清单决定，先照清单把内容定下来
+		if msg := bindExtension(sp); msg != "" {
+			return msg
+		}
+	}
 	sp.Title = strings.TrimSpace(sp.Title)
 	sp.Description = strings.TrimSpace(sp.Description)
 	if sp.Title == "" || !limitRunes(sp.Title, 64) {
@@ -109,6 +118,7 @@ func validateSpec(kind string, sp *assetSpec) string {
 		sp.Persona, sp.Starters, sp.Skills, sp.Connections, sp.Plugins, sp.Knowledge = "", nil, nil, nil, nil, nil
 		sp.Icon, sp.Launch, sp.Workbench, sp.Template, sp.Tables, sp.Web, sp.Highlights = "", "", nil, false, nil, false, nil
 		sp.Type, sp.URL, sp.Auth, sp.UserAuth, sp.OpenAPI, sp.Instructions = "", "", nil, nil, "", ""
+		sp.Extension = nil
 	case store.KindApp:
 		sp.Persona = strings.TrimSpace(sp.Persona)
 		if sp.Persona == "" {
@@ -183,6 +193,7 @@ func validateSpec(kind string, sp *assetSpec) string {
 		}
 		sp.Body, sp.WhenToUse, sp.ModelInvocable = "", "", nil
 		sp.Type, sp.URL, sp.Auth, sp.UserAuth, sp.OpenAPI, sp.Instructions = "", "", nil, nil, "", ""
+		sp.Extension = nil
 	case store.KindConnection:
 		if sp.Type != "mcp" && sp.Type != "openapi" {
 			return "连接类型只能是 mcp 或 openapi"
@@ -413,6 +424,10 @@ func (s *Server) hubItems(r *http.Request, withBody bool) ([]*hubItem, error) {
 		if !withBody {
 			it.Spec.Body, it.Spec.Persona, it.Spec.OpenAPI = "", "", ""
 		}
+		if x := it.Spec.Extension; x != nil && (!withBody || !it.CanManage) {
+			// 清单原文和管理员填的值只给管理的人看；其他人只需要知道装的是哪个扩展的哪个版本
+			it.Spec.Extension = &connExtension{ID: x.ID, Version: x.Version, Digest: x.Digest}
+		}
 		if u := users[derefID(a.OwnerID)]; u != nil {
 			it.Owner, it.OwnerName, it.Department = u.Username, u.DisplayName, u.Department
 		}
@@ -613,6 +628,14 @@ func (s *Server) decodeSpec(w http.ResponseWriter, r *http.Request, kind string,
 		writeErr(w, http.StatusBadRequest, msg)
 		return nil, nil, false
 	}
+	if sp.Extension != nil {
+		var m extension.Manifest
+		_ = json.Unmarshal([]byte(sp.Extension.Manifest), &m)
+		if msg := s.extensionCompat(&m); msg != "" {
+			writeErr(w, http.StatusBadRequest, msg)
+			return nil, nil, false
+		}
+	}
 	if !currentAccess(r).Has(rbac.PluginsManage) {
 		sp.Template = false
 	}
@@ -717,7 +740,7 @@ func (s *Server) handleHubCreate(w http.ResponseWriter, r *http.Request) {
 			resp["tools"] = n
 		}
 	}
-	s.audit(r, auditAssetCreate, req.Kind+":"+req.Slug, map[string]any{"id": a.ID, "status": status, "delivery": delivery})
+	s.audit(r, auditAssetCreate, req.Kind+":"+req.Slug, extensionAudit(sp, map[string]any{"id": a.ID, "status": status, "delivery": delivery}))
 	s.hub.notify()
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -794,6 +817,15 @@ func (s *Server) handleHubNewVersion(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if a.Kind == store.KindConnection && a.LiveVersion > 0 {
+		if msg, err := s.checkExtensionChange(r.Context(), a, sp); err != nil {
+			s.internalErr(w, r, err)
+			return
+		} else if msg != "" {
+			writeErr(w, http.StatusBadRequest, msg)
+			return
+		}
+	}
 	status, err := s.initialStatus(r, a.Kind, a.Scope)
 	if err != nil {
 		s.internalErr(w, r, err)
@@ -826,7 +858,7 @@ func (s *Server) handleHubNewVersion(w http.ResponseWriter, r *http.Request) {
 			resp["tools"] = n
 		}
 	}
-	s.audit(r, auditAssetVersion, a.Kind+":"+a.Slug, map[string]any{"id": a.ID, "version": ver, "status": status})
+	s.audit(r, auditAssetVersion, a.Kind+":"+a.Slug, extensionAudit(sp, map[string]any{"id": a.ID, "version": ver, "status": status}))
 	s.hub.notify()
 	writeJSON(w, http.StatusCreated, resp)
 }

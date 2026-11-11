@@ -1,6 +1,6 @@
 import { useNavigate, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Package, Plus } from "lucide-react";
 import { api } from "../../lib/api";
 import { useApi } from "../../lib/use-api";
 import { assetPath, scopeSummary } from "../../lib/hub";
@@ -28,9 +28,14 @@ export default function AdminConnections() {
         desc={t("connections.desc")}
         actions={
           tab === "connections" ? (
-            <Button onClick={() => navigate("/assets/new?kind=connection")}>
-              <Plus size={15} /> {t("connections.add")}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => navigate("/extensions/install")}>
+                <Package size={15} /> {t("extension.installButton")}
+              </Button>
+              <Button onClick={() => navigate("/assets/new?kind=connection")}>
+                <Plus size={15} /> {t("connections.add")}
+              </Button>
+            </div>
           ) : undefined
         }
       />
@@ -78,9 +83,18 @@ export default function AdminConnections() {
                     <tr key={c.id} className="cursor-pointer border-t border-neutral-100 hover:bg-neutral-50" onClick={() => navigate(assetPath(c.id))}>
                       <td className="px-5 py-3">
                         <div className="text-neutral-900">{c.spec.title}</div>
-                        <div className="font-mono text-xs text-neutral-500">{c.slug}</div>
+                        <div className="font-mono text-xs text-neutral-500">
+                          {c.slug}
+                          {c.spec.extension?.id && (
+                            <span className="ml-2" title={t("extension.badge")}>
+                              · {c.spec.extension.id}@{c.spec.extension.version}
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className="px-5 py-3 text-neutral-700">{c.spec.type === "openapi" ? t("connections.typeOpenapi") : t("connections.typeMcp")}</td>
+                      <td className="px-5 py-3 text-neutral-700">
+                        {c.spec.extension?.id ? <Badge tone="brand">{t("extension.badge")}</Badge> : c.spec.type === "openapi" ? t("connections.typeOpenapi") : t("connections.typeMcp")}
+                      </td>
                       <td className="px-5 py-3 text-right tabular-nums">
                         {c.tools} / {c.tools_total}
                       </td>

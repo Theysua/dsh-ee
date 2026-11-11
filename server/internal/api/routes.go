@@ -205,6 +205,7 @@ func (s *Server) routes() []route {
 		prm("POST /api/admin/hub/review", s.handleHubReview, rbac.PluginsManage),
 		prm("POST /api/admin/hub/scope-review", s.handleHubScopeReview, rbac.PluginsManage),
 		prm("PUT /api/admin/plugin-policies/{name...}", s.handlePutPluginPolicy, rbac.PluginsManage),
+		prm("POST /api/admin/extensions/inspect", s.handleExtensionInspect, rbac.ConnectionsManage),
 		prm("POST /api/admin/connections/test", s.handleConnTest, rbac.ConnectionsManage),
 		prm("POST /api/admin/connections/{id}/sync", s.handleConnSync, rbac.ConnectionsManage),
 		prm("PATCH /api/admin/connections/{id}/tools/{name}", s.handleConnTool, rbac.ConnectionsManage),

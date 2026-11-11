@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { Navigate, useNavigate, useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { AppWindow, ArrowLeft, Upload, X } from "lucide-react";
 import { api, type AssetKind, type AssetSpec, type ConnTestResult, type Delivery, type Scope } from "../lib/api";
@@ -281,6 +281,8 @@ function AssetEditor({ forceKind, tabs }: { forceKind?: AssetKind; tabs?: ReactN
   const pluginOptions = useMemo(() => plugins.map((p) => ({ value: p.name, label: p.title, hint: p.name })), [plugins]);
   const kbOptions = useMemo(() => (kb.data?.items ?? []).filter((b) => b.readable).map((b) => ({ value: b.slug, label: b.title, hint: b.slug })), [kb.data]);
 
+  // 扩展装出来的连接不在这里改：地址、凭据、工具由清单决定，设置和升级走扩展页面
+  if (editing && existing.data?.asset.spec.extension?.id) return <Navigate to={`/extensions/install?id=${id}`} replace />;
   if (editing && !existing.data) {
     return <LoadState loading={existing.loading} error={existing.error} onRetry={existing.reload}>{null}</LoadState>;
   }

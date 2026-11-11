@@ -113,7 +113,7 @@
           "enum": ["shared", "user_secret", "ee_jwt", "oauth"],
           "description": "shared：管理员配的一份共享凭据，适合只读的公共数据；user_secret：员工各自填自己的 token；ee_jwt：dsh-ee 为当前员工现签一个 5 分钟有效的 JWT，对方用 JWKS 验签；oauth：这个版本还不支持。对方能验 JWT 时优先用 ee_jwt。"
         },
-        "header": { "type": "string", "description": "员工身份放在哪个请求头。不写就是 Authorization: Bearer <值>；写了名字，值会原样放进这个请求头，前面不加 Bearer。", "examples": ["X-User-Token"] },
+        "header": { "type": "string", "description": "凭据放在哪个请求头。不写就是 Authorization: Bearer <值>；写了名字，值会原样放进这个请求头，前面不加 Bearer。shared 模式下说的是那份共享凭据（比如对方要求 X-API-Key）；user_secret / ee_jwt 模式下说的是员工身份。", "examples": ["X-API-Key", "X-User-Token"] },
         "audience": { "type": "string", "description": "只用于 ee_jwt：令牌的 aud，对方验签时核对。不写就用连接名。", "examples": ["oa"] },
         "claims": {
           "type": "array",
@@ -179,8 +179,8 @@
           "keep": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "返回结果只保留这些字段，控制返回给模型的大小。写第一层的字段名：返回的是对象就留它的这些字段，是数组就留每一项的这些字段。不知道返回里有哪些字段（接口文档没写 responses）就不要写。",
-            "examples": [["id", "title", "status"]]
+            "description": "返回结果只保留这些字段，控制返回给模型的大小。写第一层的字段名：返回的是对象就留它的这些字段，是数组就留每一项的这些字段。列表被包了一层时（{\"items\": [...], \"total\": 1}）写成「字段.子字段」：items.id 留下 items 里每一项的 id；最多写到第二层。没写进来的字段一律丢掉，所以包了一层的列表不能直接写每一项的字段名。不知道返回里有哪些字段（接口文档没写 responses）就不要写。",
+            "examples": [["id", "title", "status"], ["items.id", "items.title", "total"]]
           }
         }
       }

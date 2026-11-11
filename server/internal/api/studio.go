@@ -572,6 +572,11 @@ func (s *Server) handleAppFileExport(w http.ResponseWriter, r *http.Request) {
 				it.Spec.Auth = &connAuth{Type: xs.Auth.Type, Header: xs.Auth.Header}
 				it.NeedsSecret = xs.Auth.Type != "none"
 			}
+			if xs.Extension != nil {
+				// 扩展装出来的连接连同清单和管理员填的参数一起导出，导入时照清单重新装
+				x := *xs.Extension
+				it.Spec.Extension = &x
+			}
 			if xs.UserAuth != nil {
 				// 员工身份的设置里没有凭据，跟着连接一起导出；员工各自的凭据不导出
 				ua := *xs.UserAuth

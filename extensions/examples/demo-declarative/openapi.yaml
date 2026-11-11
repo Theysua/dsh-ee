@@ -30,6 +30,30 @@ paths:
           required: false
           description: 待处理 / 处理中 / 已解决 / 已关闭，或「未解决」
           schema: { type: string }
+      responses:
+        "200":
+          description: 工单列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        title: { type: string }
+                        category: { type: string }
+                        requester: { type: string }
+                        assignee: { type: string }
+                        priority: { type: string }
+                        status: { type: string }
+                        created_at: { type: string }
+                        updated_at: { type: string }
+                        overdue: { type: boolean }
+                        detail: { type: string }
     post:
       operationId: create_ticket
       summary: 新建一张 IT 工单

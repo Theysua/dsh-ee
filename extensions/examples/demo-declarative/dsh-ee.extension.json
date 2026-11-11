@@ -10,7 +10,7 @@
   "kind": "declarative",
   "openapi": "openapi.yaml",
   "servers": ["http://127.0.0.1:8080"],
-  "credential": { "mode": "shared" },
+  "credential": { "mode": "shared", "header": "X-Demo-Key" },
   "tools": [
     {
       "name": "get_summary",
@@ -29,7 +29,7 @@
       "params": [
         { "name": "status", "enum": ["待处理", "处理中", "已解决", "已关闭", "未解决"] }
       ],
-      "keep": ["id", "title", "category", "status", "priority", "requester", "created_at"]
+      "keep": ["items.id", "items.title", "items.category", "items.status", "items.priority", "items.requester", "items.created_at"]
     },
     { "name": "list_categories", "readOnly": true },
     {

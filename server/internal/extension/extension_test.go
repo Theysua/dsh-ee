@@ -195,6 +195,7 @@ func TestCheckReports(t *testing.T) {
 		{name: "共享凭据类型不对", code: "credential.shared_invalid", where: "#/credential/shared/type", edit: set("credential.shared", map[string]any{"type": "basic"})},
 		{name: "共享凭据请求头不对", code: "credential.shared_invalid", where: "#/credential/shared/header", edit: set("credential.shared", map[string]any{"type": "header", "header": ""})},
 		{name: "带了不能带的员工信息", code: "credential.claims_invalid", where: "#/credential/claims/0", edit: set("credential.claims", []any{"salary"})},
+		{name: "shared 模式又写了 shared", code: "credential.field_unused", where: "#/credential/shared", edit: set("credential", map[string]any{"mode": "shared", "shared": map[string]any{"type": "bearer"}})},
 		{name: "shared 模式写了 audience", code: "credential.field_unused", where: "#/credential", edit: set("credential", map[string]any{"mode": "shared", "audience": "oa"})},
 		{name: "ee_jwt 写了 hint", code: "credential.field_unused", where: "#/credential/hint", edit: set("credential.hint", "去 OA 里生成")},
 		{name: "user_secret 没写去哪拿", code: "credential.hint_missing", where: "#/credential/hint", edit: set("credential", map[string]any{"mode": "user_secret"})},
@@ -249,6 +250,9 @@ func TestCheckReports(t *testing.T) {
 			tool(2, "readOnly", true)(m)
 			m["checkIgnore"] = []any{map[string]any{"code": "tool.readonly_suspect", "reason": " "}}
 		}},
+		{name: "列表包了一层，keep 却直接写每一项的字段", code: "keep.wrapped", where: "#/tools/0/keep", edit: tool(0, "keep", []any{"id", "title"}),
+			extra: map[string]string{"openapi.json": strings.Replace(goodDoc, `"schema":{"type":"array","items":{"$ref":"#/components/schemas/Form"}}`,
+				`"schema":{"type":"object","properties":{"total":{"type":"integer"},"items":{"type":"array","items":{"$ref":"#/components/schemas/Form"}}}}`, 1)}},
 		{name: "忽略没对上任何结果", code: "ignore.unused", where: "#/checkIgnore/0", edit: set("checkIgnore", []any{map[string]any{"code": "tool.readonly_suspect", "reason": "已确认"}})},
 	}
 	covered := map[string]bool{}
@@ -368,11 +372,66 @@ func TestKeepNeedsResponseSchema(t *testing.T) {
 	if res := Check(files(m, nil)); len(res.Results) != 0 {
 		t.Fatalf("get_form 的接口文档没写 responses，keep 不该报：%+v", res.Results)
 	}
-	if fields, known := responseFields([]byte(goodDoc), "GET", "/forms"); !known || !slices.Equal(fields, []string{"auditTrail", "id", "state", "title"}) {
-		t.Fatalf("list_forms 返回数组，字段取每一项的（跟着 $ref 找）：%v %v", fields, known)
+	if shape, known := responseShape([]byte(goodDoc), "GET", "/forms"); !known || !slices.Equal(shape.fields, []string{"auditTrail", "id", "state", "title"}) {
+		t.Fatalf("list_forms 返回数组，字段取每一项的（跟着 $ref 找）：%v %v", shape, known)
 	}
-	if _, known := responseFields([]byte(goodDoc), "GET", "/forms/{id}"); known {
+	if _, known := responseShape([]byte(goodDoc), "GET", "/forms/{id}"); known {
 		t.Fatal("没写 responses 的接口不知道返回里有什么")
+	}
+	// 写法不对（超过两层）不管接口文档写没写返回结构都报
+	m["tools"].([]any)[1].(map[string]any)["keep"] = []any{"a.b.c"}
+	if res := Check(files(m, nil)); len(res.Results) != 1 || res.Results[0].Code != "keep.unknown" || !strings.Contains(res.Results[0].Fix, "items.id") {
+		t.Fatalf("keep 最多写到第二层：%+v", res.Results)
+	}
+}
+
+// 列表被包了一层（{items: [...], total}）是最常见的返回：keep 写成 items.id，直接写 id 会把返回清空。
+func TestKeepWrappedList(t *testing.T) {
+	const doc = `openapi: 3.0.3
+info: { title: T, version: "1" }
+paths:
+  /tickets:
+    get:
+      operationId: list_tickets
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  page: { type: object }
+                  items:
+                    type: array
+                    items: { type: object, properties: { id: { type: string }, title: { type: string }, detail: { type: string } } }
+`
+	check := func(keep ...any) []Diagnostic {
+		m := map[string]any{
+			"id": "acme/t", "version": "1.0.0", "name": "T", "description": "d", "kind": "declarative",
+			"openapi": "openapi.yaml", "servers": []any{"https://t.acme.internal"},
+			"tools": []any{map[string]any{"name": "list_tickets", "readOnly": true, "keep": keep}},
+		}
+		raw, _ := json.Marshal(m)
+		return Check(fstest.MapFS{ManifestFile: {Data: raw}, "openapi.yaml": {Data: []byte(doc)}}).Results
+	}
+	if got := check("items.id", "items.title", "total", "page.anything"); len(got) != 0 {
+		t.Fatalf("items.id / total 是返回里有的；page 的结构接口文档没写，查不了不报：%+v", got)
+	}
+	got := check("items.id", "items.status")
+	if len(got) != 1 || got[0].Where != ManifestFile+"#/tools/0/keep/1" || !strings.Contains(got[0].Fix, "detail、id、title") {
+		t.Fatalf("items 里没有 status：%+v", got)
+	}
+	// 直接写了每一项的字段：返回会被清空。按错误报，只报一条，并照他写的字段给出改法
+	got = check("id", "title")
+	if len(got) != 1 || got[0].Code != "keep.wrapped" || got[0].Severity != SevError || got[0].Where != ManifestFile+"#/tools/0/keep" ||
+		!strings.Contains(got[0].Message, "items") || !strings.Contains(got[0].Fix, `"items.id"`) {
+		t.Fatalf("包了一层却直接写每一项的字段：%+v", got)
+	}
+	// 写的字段哪里都没有：这是普通的写错，照常逐条提醒
+	if got = check("nothing"); len(got) != 1 || got[0].Code != "keep.unknown" {
+		t.Fatalf("哪里都没有的字段：%+v", got)
 	}
 }
 
@@ -529,5 +588,19 @@ func TestSchemas(t *testing.T) {
 			t.Fatalf("错误码表里的 %s 重复或不完整", c.Code)
 		}
 		seen[c.Code] = true
+	}
+}
+
+// shared 模式下，header 说的是共享凭据放在哪个请求头：对方要求 X-API-Key 是最常见的情况，要能写在清单里。
+func TestSharedCredentialHeader(t *testing.T) {
+	m := good()
+	m["credential"] = map[string]any{"mode": "shared", "header": "x-api-key"}
+	res := Check(files(m, nil))
+	if len(res.Results) != 0 || res.Credential == nil || res.Credential.SharedHeader != "X-Api-Key" || res.Credential.Header != "" {
+		t.Fatalf("shared 模式写 header 应当通过，并在结果里写明放在哪：%+v %+v", res.Results, res.Credential)
+	}
+	m["credential"] = map[string]any{"mode": "shared"}
+	if res = Check(files(m, nil)); res.Credential.SharedHeader != "Authorization: Bearer" {
+		t.Fatalf("不写 header 就是 Authorization: Bearer：%+v", res.Credential)
 	}
 }

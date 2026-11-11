@@ -778,6 +778,81 @@ export interface AssetSpec {
   openapi?: string;
   instructions?: string;
   timeout_seconds?: number;
+  /** 连接：由扩展清单装出来的（声明式扩展）。地址、凭据、工具都由清单决定 */
+  extension?: ConnExtension;
+}
+
+/** 连接上的扩展信息。清单原文和管理员填的值只有管理连接的人拿得到。 */
+export interface ConnExtension {
+  id?: string;
+  version?: string;
+  digest?: string;
+  manifest?: string;
+  values?: Record<string, unknown>;
+}
+
+/** 清单里给人看的文字：一个字符串，或分语言写。 */
+export type ExtText = string | { zh?: string; en?: string };
+
+export interface ExtDiagnostic {
+  code: string;
+  severity: "error" | "warning" | "info";
+  where: string;
+  message: string;
+  fix?: string;
+}
+
+/** 安装时要人填的一个参数（清单里 fill 是 admin 或 app 的）。 */
+export interface ExtFormParam {
+  key: string;
+  fill: "admin" | "app";
+  label: ExtText;
+  description?: ExtText;
+  type?: string;
+  choices?: unknown[];
+  default?: unknown;
+  required: boolean;
+  tools: string[];
+}
+
+export interface ExtToolView {
+  name: string;
+  description: string;
+  method: string;
+  path: string;
+  read_only: boolean;
+  fixed?: { name: string; key: string; fill: "admin" | "app"; required?: boolean }[];
+  keep?: string[];
+}
+
+/** 检查一个扩展包的结果：安装前给管理员看的全部内容。 */
+export interface ExtensionInspect {
+  check: {
+    ok: boolean;
+    identity?: string;
+    kind?: string;
+    digest?: string;
+    servers?: string[];
+    credential?: { mode: "shared" | "user_secret" | "ee_jwt" | "oauth"; header?: string; audience?: string; claims?: string[]; sharedHeader?: string };
+    errors: number;
+    warnings: number;
+    results: ExtDiagnostic[];
+  };
+  manifest?: { id: string; version: string; name: ExtText; description?: ExtText; repo?: string; kind: string; minVersion?: string };
+  installable?: boolean;
+  /** 不能装的原因（检查通过了但这个版本装不了） */
+  blocked?: string;
+  tools?: ExtToolView[];
+  params?: ExtFormParam[];
+  /** 安装时原样交回去的清单和接口文档 */
+  package?: { manifest: string; openapi: string };
+  slug?: string;
+  /** 清单里写了、但这个版本安装时不处理的部分 */
+  ignored?: ("config" | "apps")[];
+  /** 升级时：和线上版本的差别 */
+  change?: { from: string; new_writes?: string[]; new_reads?: string[]; removed?: string[]; credential?: string[]; new_servers?: string[] };
+  /** 升级时：现在填的参数值 */
+  values?: Record<string, unknown>;
 }
 
 export interface HubAsset {
@@ -848,6 +923,9 @@ export interface ConnectionCall {
   latency_ms: number;
   /** 这次调用带的员工身份：没有（只有共享凭据）/ ee_jwt / user_secret */
   auth_mode?: "ee_jwt" | "user_secret";
+  /** 连接是扩展装出来的：当时的「身份@版本」和清单哈希 */
+  extension?: string;
+  digest?: string;
   created_at: string;
 }
 
@@ -1522,6 +1600,7 @@ export const api = {
   webAppSource: (slug: string, pane: string, widget: number) =>
     request<{ value?: unknown; forbidden?: boolean; error?: string }>("POST", `/api/me/apps/${encodeURIComponent(slug)}/source`, { pane, widget }),
   appExportUrl: (slug: string, table: string) => `/api/apps/${encodeURIComponent(slug)}/data/${encodeURIComponent(table)}/export`,
+  inspectExtension: (body: { zip?: string; manifest?: string; openapi?: string; id?: number }) => request<ExtensionInspect>("POST", "/api/admin/extensions/inspect", body),
   createAsset: (a: AssetCreate) =>
     request<{ asset: HubAsset; status: PluginStatus; tools?: number; sync_error?: string }>("POST", "/api/hub", a),
   newAssetVersion: (id: number, spec: AssetSpec, secret?: string) =>

@@ -173,7 +173,8 @@ function AssetDetail() {
   const owns = a.owner_id !== null && a.owner_id === user?.id;
   const canEdit = a.can_manage || owns;
   const server = d.server_name ?? "ee";
-  const editPath = `/assets/${a.id}/edit`;
+  // 扩展装出来的连接：地址、凭据、工具由清单决定，改设置和升级走扩展页面
+  const editPath = a.kind === "connection" && a.spec.extension?.id ? `/extensions/install?id=${a.id}` : `/assets/${a.id}/edit`;
 
   const toggleSub = () =>
     act(() => (a.subscribed ? api.unsubscribe(a.id) : api.subscribe(a.id)), t(a.subscribed ? "hub.disabledMsg" : "hub.enabledMsg", { title: a.spec.title }));
@@ -259,7 +260,7 @@ function AssetDetail() {
           )}
           {canEdit && (
             <Button variant="secondary" onClick={() => navigate(editPath)}>
-              {a.kind === "connection" ? t("asset.editConnection") : t("asset.newVersion")}
+              {a.kind === "connection" ? t(a.spec.extension?.id ? "extension.manage" : "asset.editConnection") : t("asset.newVersion")}
             </Button>
           )}
           {canEdit && (
@@ -462,7 +463,14 @@ function AssetDetail() {
                       <tr key={i} className="border-t border-neutral-100">
                         <td className="px-5 py-2 whitespace-nowrap text-neutral-600 tabular-nums">{formatTime(c.created_at)}</td>
                         <td className="px-5 py-2">{c.username}</td>
-                        <td className="px-5 py-2 font-mono text-xs">{c.tool}</td>
+                        <td className="px-5 py-2 font-mono text-xs">
+                          {c.tool}
+                          {c.extension && (
+                            <div className="text-neutral-500" title={`${t("extension.callVersion")} · sha256:${c.digest ?? ""}`}>
+                              {c.extension.slice(c.extension.lastIndexOf("@"))}
+                            </div>
+                          )}
+                        </td>
                         <td className="px-5 py-2">
                           {c.auth_mode && <span className="mr-2"><Badge>{t(`identity.modeShort.${c.auth_mode}`)}</Badge></span>}
                           {c.ok ? <Badge tone="green">{t("asset.callOk")}</Badge> : <Badge tone="red">{t("asset.callFail")}</Badge>}
@@ -506,9 +514,19 @@ function AssetDetail() {
             <Info label={t("asset.usage")}>{t("asset.usageValue", { uses: a.uses, users: a.users })}</Info>
             {a.kind === "connection" && a.can_manage && (
               <>
-                <Info label={t("connections.type")}>{a.spec.type === "openapi" ? t("connections.typeOpenapi") : t("connections.typeMcp")}</Info>
+                <Info label={t("connections.type")}>{a.spec.extension?.id ? t("extension.badge") : a.spec.type === "openapi" ? t("connections.typeOpenapi") : t("connections.typeMcp")}</Info>
+                {a.spec.extension?.id && (
+                  <Info label={t("extension.identity")}>
+                    <span className="font-mono text-xs break-all">
+                      {a.spec.extension.id}@{a.spec.extension.version}
+                    </span>
+                    <div className="font-mono text-xs break-all text-neutral-500" title={a.spec.extension.digest}>
+                      sha256:{a.spec.extension.digest?.slice(0, 12)}
+                    </div>
+                  </Info>
+                )}
                 {a.spec.url && (
-                  <Info label={a.spec.type === "openapi" ? t("connections.apiBase") : t("connections.url")}>
+                  <Info label={a.spec.extension?.id ? t("extension.servers") : a.spec.type === "openapi" ? t("connections.apiBase") : t("connections.url")}>
                     <span className="font-mono text-xs break-all">{a.spec.url}</span>
                   </Info>
                 )}

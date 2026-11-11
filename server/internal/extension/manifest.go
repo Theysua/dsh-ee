@@ -140,7 +140,7 @@ type ConfigField struct {
 // Credential 是调用时用谁的身份。
 type Credential struct {
 	Mode string `json:"mode"`
-	// 员工身份放在哪个请求头；空则 Authorization: Bearer
+	// 凭据放在哪个请求头；空则 Authorization: Bearer。shared 模式下说的是共享凭据，其他模式下是员工身份
 	Header string `json:"header,omitempty"`
 	// ee_jwt：令牌的 aud；空则用扩展的连接名
 	Audience string `json:"audience,omitempty"`
@@ -165,7 +165,7 @@ type Tool struct {
 	// 只读的工具才标 true；没标的一律当写操作
 	ReadOnly bool    `json:"readOnly,omitempty"`
 	Params   []Param `json:"params,omitempty"`
-	// 返回结果只保留这些字段（控制返回给模型的大小）
+	// 返回结果只保留这些字段（控制返回给模型的大小）：第一层的字段名，或「字段.子字段」到第二层
 	Keep []string `json:"keep,omitempty"`
 }
 
